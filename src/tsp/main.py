@@ -7,6 +7,7 @@ import os
 from data_generator import Generator
 from model import Siamese_GNN, Siamese_2GNN
 from Logger import Logger
+from utils import beamsearch_hamcycles
 import time
 import matplotlib
 matplotlib.use('Agg')
@@ -116,6 +117,52 @@ def compute_loss(pred, target):
         # raise ValueError('Only cross entropy implemented.')
     return loss
 
+def compute_path_probability(pred, paths):
+    pred = F.sigmoid(pred) + 1e-6
+    N = pred.size(-1)
+    Bs = pred.size(0)
+    T = paths.size(1)
+    logp = Variable(torch.zeros(Bs,T).type(dtype))
+    vec1 = torch.zeros(Bs,T).type(dtype)
+    for b in range(Bs):
+        predb = pred[b]
+        for t in range(T):
+            remaining = torch.ones(N).type(dtype)
+            pathbt = paths[b,t]
+            start = pathbt[0]
+            summ = Variable(torch.zeros(1).type(dtype))
+            for end in pathbt[1:]:
+                remaining[start] = 0.0
+                plus = torch.log(predb[start,end] / torch.dot(Variable(remaining), predb[start]))
+                summ += plus
+                start = end
+            vec1[b,t] = 1.0
+            logp += Variable(vec1)*summ
+            vec1[b,t] = 0.0
+    return logp
+
+#def compute_path_matrix(N, path):
+    
+
+def compute_path_probability_relaxed(pred, paths):
+    pred = F.sigmoid(pred) + 1e-6
+    N = pred.size(-1)
+    Bs = pred.size(0)
+    T = paths.size(1)
+    I = torch.eye(N)
+    
+    #prob = torch.sum(torch.mm(I.index_select(1,torch.cat((pathbt[1:],torch.LongTensor([pathbt[0]])),0)),I.index_select(0,pathbt)) * predb)
+
+def compute_loss2(pred, W):
+    costs,paths = beamsearch_hamcycles(pred.data, W.data, 3, beam_size=args.beam_size)
+    costs = Variable(costs)
+    probs = compute_path_probability(pred, paths)
+    #print(probs)
+    Bs = pred.size(0)
+    T = probs.size(1)
+    loss = torch.sum(costs.float()*probs) / Bs / T
+    return loss
+
 def train(siamese_gnn, logger, gen):
     optimizer = torch.optim.Adamax(siamese_gnn.parameters(), lr=1e-3)
     for it in range(args.iterations):
@@ -124,7 +171,9 @@ def train(siamese_gnn, logger, gen):
         sample = gen.sample_batch(batch_size, cuda=torch.cuda.is_available())
         input, W, WTSP, labels, target, cities, perms, costs = extract(sample)
         pred = siamese_gnn(*input)
-        loss = compute_loss(pred, target)
+        #print(W, WTSP, labels, target, cities, perms, costs)
+        loss = compute_loss2(pred, W)
+        #print("loss",loss)
         siamese_gnn.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm(siamese_gnn.parameters(), args.clip_grad_norm)
@@ -133,7 +182,7 @@ def train(siamese_gnn, logger, gen):
         logger.add_train_accuracy(pred, labels, W)
         elapsed = time.time() - start
         if it % logger.args['print_freq'] == 0:
-            logger.plot_train_logs()
+            #logger.plot_train_logs()
             loss = loss.data.cpu().numpy()[0]
             out = ['---', it, loss, logger.accuracy_train[-1],
                    logger.cost_train[-1], args.dual, elapsed]
@@ -142,7 +191,7 @@ def train(siamese_gnn, logger, gen):
         if it % logger.args['test_freq'] == 0:
             # test
             test(siamese_gnn, logger, gen)
-            logger.plot_test_logs()
+            #logger.plot_test_logs()
         if it % logger.args['save_freq'] == logger.args['save_freq'] - 1:
             logger.save_model(siamese_gnn)
     print('Optimization finished.')
@@ -156,7 +205,7 @@ def test(siamese_gnn, logger, gen):
                                  cuda=torch.cuda.is_available())
         input, W, WTSP, labels, target, cities, perms, costs = extract(batch)
         pred = siamese_gnn(*input)
-        loss = compute_loss(pred, target)
+        loss = compute_loss2(pred, W)
         last = (it == iterations_test-1)
         logger.add_test_accuracy(pred, labels, perms, W, cities, costs,
                                  last=last, beam_size=args.beam_size)

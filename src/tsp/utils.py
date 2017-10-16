@@ -91,6 +91,38 @@ def greedy_hamcycle(pred, W):
         Paths.append(path)
     return Costs, Paths
 
+def greedy(pred, W):
+    def next_vertex(start, pred, remaining):
+        nxt = torch.max((remaining)*pred[start],0)[1]
+        return nxt.data.long()[0]
+    N = W.size(-1)
+    batch_size = W.size(0)
+    Costs = []
+    Paths = []
+    cost = 0.0
+    path = []
+    for b in range(batch_size):
+        path = [0]
+        predb = pred[b]
+        Wb = W[b]
+        remaining = Variable(torch.ones(N).cuda())
+        start = 0
+        remaining[start] = 0
+        end = next_vertex(start, predb, remaining)
+        for i in range(N-2):
+            cost = cost + Wb[start, end].data
+            path.append(end)
+            remaining[end] = 0
+            start = end
+            end = next_vertex(start, predb, remaining)
+        cost = cost + Wb[start, end].data
+        path.append(end)
+        cost = cost + Wb[end, 0].data
+        Costs.append(cost[0])
+        Paths.append(path)
+    return Costs, Paths
+    
+
 def compute_cost_path(Paths, W):
     # Paths is a list of length N+1
     batch_size = W.size(0)
@@ -121,4 +153,22 @@ def beamsearch_hamcycle(pred, W, beam_size=2):
     Paths = BS.get_hyp(ends)
     # Compute cost of path
     Costs = compute_cost_path(Paths, W)
+    return Costs, Paths
+
+def beamsearch_hamcycles(pred, W, n_paths, beam_size=2):
+    N = W.size(-1)
+    batch_size = W.size(0)
+    BS = BeamSearch(beam_size, batch_size, N)
+    trans_probs = pred.gather(1, BS.get_current_state())
+    for step in range(N-1):
+        BS.advance(trans_probs, step + 1)
+        trans_probs = pred.gather(1, BS.get_current_state())
+    Paths = torch.zeros(batch_size, n_paths, N).type(dtype_l)
+    Costs = torch.zeros(batch_size, n_paths).type(dtype_l)
+    for t in range(n_paths):
+        ends = t*torch.ones(batch_size, 1).type(dtype_l)
+        # extract paths
+        Paths[:,t] = BS.get_hyp(ends)
+        # Compute cost of path
+        Costs[:,t] = compute_cost_path(Paths[:,t], W)
     return Costs, Paths
