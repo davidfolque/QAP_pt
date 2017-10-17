@@ -36,14 +36,16 @@ def sinkhorn_knopp(A, iterations=1):
     return A
 
 def gmul(input):
-    W, x = input
+    W, x, y = input
     # x is a tensor of size (bs, N, num_features)
+    # y is a tensor of size (bs, N, N)
     # W is a tensor of size (bs, N, N, J)
     x_size = x.size()
     W_size = W.size()
     N = W_size[-2]
     J = W_size[-1]
     W = W.split(1, 3)
+    W = W + (y.unsqueeze(3),)
     W = torch.cat(W, 1).squeeze(3) # W is now a tensor of size (bs, J*N, N)
     output = torch.bmm(W, x) # output has size (bs, J*N, num_features)
     output = output.split(N, 1)
@@ -57,32 +59,43 @@ def normalize_embeddings(emb):
 class Gconv_last(nn.Module):
     def __init__(self, feature_maps, J):
         super(Gconv_last, self).__init__()
-        self.num_inputs = J*feature_maps[0]
+        self.num_inputs = (J+1)*feature_maps[0]
         self.num_outputs = feature_maps[2]
         self.fc = nn.Linear(self.num_inputs, self.num_outputs)
+        self.beta = nn.Linear(self.num_outputs, 1, bias=False)
 
     def forward(self, input):
-        W = input[0]
+        W, x, y = input
+        N = y.size(-1)
+        bs = y.size(0)
         x = gmul(input) # out has size (bs, N, num_inputs)
         x_size = x.size()
         x = x.contiguous()
         x = x.view(x_size[0]*x_size[1], -1)
         x = self.fc(x) # has size (bs*N, num_outputs)
         x = x.view(*x_size[:-1], self.num_outputs)
-        return W, x
+        bx = self.beta(x) # falta veure que concorden les dimensions (potser s'ha de transposar x)
+        Bx = bx.expand(bs,N,N) # Bx has size (bs, N, N)
+        y = F.softmax(Bx + Bx.permute(0,2,1))
+        y = (y + y.permute(0,2,1))/2
+        y = y * (1-Variable(torch.eye(N).type(dtype)).unsqueeze(0).expand(bs,N,N))
+        return W, x, y
 
 class Gconv(nn.Module):
     def __init__(self, feature_maps, J):
         super(Gconv, self).__init__()
-        self.num_inputs = J*feature_maps[0]
+        self.num_inputs = (J+1)*feature_maps[0]
         self.num_outputs = feature_maps[2]
         self.fc1 = nn.Linear(self.num_inputs, self.num_outputs // 2)
         self.fc2 = nn.Linear(self.num_inputs, self.num_outputs // 2)
+        self.beta = nn.Linear(self.num_outputs, 1, bias=False)
         self.bn = nn.BatchNorm1d(self.num_outputs)
         self.bn_instance = nn.InstanceNorm1d(self.num_outputs)
 
     def forward(self, input):
-        W = input[0]
+        W, x, y = input
+        N = y.size(-1)
+        bs = y.size(0)
         x = gmul(input) # out has size (bs, N, num_inputs)
         x_size = x.size()
         x = x.contiguous()
@@ -93,7 +106,12 @@ class Gconv(nn.Module):
         # x = self.bn(x)
         x = x.view(*x_size[:-1], self.num_outputs)
         x = self.bn_instance(x.permute(0, 2, 1)).permute(0, 2, 1)
-        return W, x
+        bx = self.beta(x) # falta veure que concorden les dimensions (potser s'ha de transposar x)
+        Bx = bx.expand(bs,N,N) # Bx has size (bs, N, N)
+        y = F.softmax(Bx + Bx.permute(0,2,1))
+        y = (y + y.permute(0,2,1))/2
+        y = y * (1-Variable(torch.eye(N).type(dtype)).unsqueeze(0).expand(bs,N,N))
+        return W, x, y
 
 class GNN(nn.Module):
     def __init__(self, num_features, num_layers, J, dim_input=1):

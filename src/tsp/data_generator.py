@@ -258,6 +258,7 @@ class Generator(TSP):
         # define batch elements
         WW = torch.zeros(num_samples, *WW_size)
         X = torch.zeros(num_samples, *x_size)
+        Y = torch.zeros(num_samples, self.N, self.N)
         WTSP = torch.zeros(num_samples, self.N, self.N)
         if self.sym:
             P = torch.zeros(num_samples, self.N, 2)
@@ -283,6 +284,7 @@ class Generator(TSP):
                 ww = torch.from_numpy(dataset[ind]['WW'])
             x = torch.from_numpy(dataset[ind]['x'])
             WW[b], X[b] = ww, x
+            Y[b] = ww[:,:,1]
             WTSP[b] = torch.from_numpy(dataset[ind]['WTSP'])
             P[b] = torch.from_numpy(dataset[ind]['labels'])
             Cities[b] = torch.from_numpy(dataset[ind]['cities'])
@@ -291,13 +293,14 @@ class Generator(TSP):
         # wrap as variables
         WW = Variable(WW, volatile=volatile)
         X = Variable(X, volatile=volatile)
+        Y = Variable(Y, volatile=volatile)
         WTSP = Variable(WTSP, volatile=volatile)
         P = Variable(P, volatile=volatile)
         if cuda:
-            return ([WW.cuda(), X.cuda()], [WTSP.cuda(), P.cuda()],
+            return ([WW.cuda(), X.cuda(), Y.cuda()], [WTSP.cuda(), P.cuda()],
                     Cities.cuda(), Perm.cuda(), Cost)
         else:
-            return [WW, X], [WTSP, P], Cities, Perm, Cost
+            return [WW, X, Y], [WTSP, P], Cities, Perm, Cost
 
 if __name__ == '__main__':
     # Test Generator module
