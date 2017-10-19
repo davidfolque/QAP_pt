@@ -3,6 +3,7 @@
 
 import matplotlib
 matplotlib.use('Agg')
+from numpy import random
 
 # Pytorch requirements
 import unicodedata
@@ -62,7 +63,8 @@ class Gconv_last(nn.Module):
         self.num_inputs = (J+1)*feature_maps[0]
         self.num_outputs = feature_maps[2]
         self.fc = nn.Linear(self.num_inputs, self.num_outputs)
-        self.beta = nn.Linear(self.num_outputs, 1, bias=False)
+        self.beta = nn.Linear(self.num_outputs, 1, bias=True)
+        self.sigma = nn.Parameter(torch.Tensor([random.uniform(0.0,1.0)]).type(dtype))
 
     def forward(self, input):
         W, x, y = input
@@ -74,10 +76,10 @@ class Gconv_last(nn.Module):
         x = x.view(x_size[0]*x_size[1], -1)
         x = self.fc(x) # has size (bs*N, num_outputs)
         x = x.view(*x_size[:-1], self.num_outputs)
-        bx = self.beta(x) # falta veure que concorden les dimensions (potser s'ha de transposar x)
-        Bx = bx.expand(bs,N,N) # Bx has size (bs, N, N)
-        y = F.softmax(Bx + Bx.permute(0,2,1))
-        y = (y + y.permute(0,2,1))/2
+        bx = self.beta(x)
+        Bx = bx.expand(bs,N,N)
+        y = F.sigmoid(Bx + Bx.permute(0,2,1) + self.sigma*y)
+        #y = (y + y.permute(0,2,1))/2
         y = y * (1-Variable(torch.eye(N).type(dtype)).unsqueeze(0).expand(bs,N,N))
         return W, x, y
 
@@ -88,7 +90,8 @@ class Gconv(nn.Module):
         self.num_outputs = feature_maps[2]
         self.fc1 = nn.Linear(self.num_inputs, self.num_outputs // 2)
         self.fc2 = nn.Linear(self.num_inputs, self.num_outputs // 2)
-        self.beta = nn.Linear(self.num_outputs, 1, bias=False)
+        self.beta = nn.Linear(self.num_outputs, 1, bias=True)
+        self.sigma = nn.Parameter(torch.Tensor([random.uniform(0.0,1.0)]).type(dtype))
         self.bn = nn.BatchNorm1d(self.num_outputs)
         self.bn_instance = nn.InstanceNorm1d(self.num_outputs)
 
@@ -103,13 +106,12 @@ class Gconv(nn.Module):
         x1 = F.relu(self.fc1(x)) # has size (bs*N, num_outputs)
         x2 = self.fc2(x)
         x = torch.cat((x1, x2), 1)
-        # x = self.bn(x)
         x = x.view(*x_size[:-1], self.num_outputs)
         x = self.bn_instance(x.permute(0, 2, 1)).permute(0, 2, 1)
-        bx = self.beta(x) # falta veure que concorden les dimensions (potser s'ha de transposar x)
+        bx = self.beta(x)
         Bx = bx.expand(bs,N,N) # Bx has size (bs, N, N)
-        y = F.softmax(Bx + Bx.permute(0,2,1))
-        y = (y + y.permute(0,2,1))/2
+        y = F.sigmoid(Bx + Bx.permute(0,2,1) + self.sigma*y) # if y was symetric will remains symetric
+        #y = (y + y.permute(0,2,1))/2
         y = y * (1-Variable(torch.eye(N).type(dtype)).unsqueeze(0).expand(bs,N,N))
         return W, x, y
 

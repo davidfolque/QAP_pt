@@ -172,7 +172,7 @@ def train(siamese_gnn, logger, gen):
         input, W, WTSP, labels, target, cities, perms, costs = extract(sample)
         pred = siamese_gnn(*input)
         #print(W, WTSP, labels, target, cities, perms, costs)
-        loss = compute_loss2(pred, W)
+        loss = compute_loss(pred, target)
         #print("loss",loss)
         siamese_gnn.zero_grad()
         loss.backward()
@@ -205,7 +205,7 @@ def test(siamese_gnn, logger, gen):
                                  cuda=torch.cuda.is_available())
         input, W, WTSP, labels, target, cities, perms, costs = extract(batch)
         pred = siamese_gnn(*input)
-        loss = compute_loss2(pred, W)
+        loss = compute_loss(pred, target)
         last = (it == iterations_test-1)
         logger.add_test_accuracy(pred, labels, perms, W, cities, costs,
                                  last=last, beam_size=args.beam_size)
